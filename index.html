@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Indonesia Region Painter (export PNG/SVG 3072x2048)</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"
+    />
+    <style>
+      html,
+      body,
+      #map {
+        height: 100%;
+        margin: 0;
+      }
+      .toolbar {
+        position: absolute;
+        z-index: 1000;
+        left: 12px;
+        top: 12px;
+        background: #0b0f17cc;
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 12px 12px 10px;
+        color: #e5e7eb;
+        font: 14px/1.3 system-ui;
+        backdrop-filter: blur(6px);
+      }
+      .toolbar .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 6px;
+      }
+      .toolbar label {
+        opacity: 0.85;
+        font-size: 12px;
+      }
+      .toolbar input[type="text"] {
+        width: 200px;
+        padding: 6px 8px;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #0b1220;
+        color: #e5e7eb;
+      }
+      .toolbar input[type="number"] {
+        width: 76px;
+        padding: 4px 6px;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #0b1220;
+        color: #e5e7eb;
+      }
+      .toolbar input[type="color"] {
+        width: 36px;
+        height: 28px;
+        border: none;
+        background: transparent;
+      }
+      .toolbar button {
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid #334155;
+        background: #111827;
+        color: #e5e7eb;
+        cursor: pointer;
+      }
+      .toolbar button.primary {
+        background: #0ea5e9;
+        border-color: #0284c7;
+        color: white;
+      }
+      .toolbar .hint {
+        opacity: 0.7;
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <div class="toolbar">
+      <div><b>Region name</b></div>
+      <input id="rname" placeholder="mis. Jawa Barat" />
+      <div class="row">
+        <label>Fill</label
+        ><input id="fillColor" type="color" value="#00c8ff" />
+        <label>Opacity</label
+        ><input
+          id="fillOpacity"
+          type="number"
+          step="0.05"
+          min="0"
+          max="1"
+          value="0.8"
+        />
+      </div>
+      <div class="row">
+        <label>Stroke</label
+        ><input id="strokeColor" type="color" value="#00d4ff" />
+        <label>Width</label
+        ><input
+          id="strokeWidth"
+          type="number"
+          step="1"
+          min="0"
+          max="20"
+          value="2"
+        />
+      </div>
+      <div class="row" style="margin-top: 8px">
+        <button id="btnExportPNG" class="primary">Export PNG</button>
+        <button id="btnExportSVG">Export SVG</button>
+        <button id="btnClear">Clear</button>
+      </div>
+      <div class="hint">
+        Tips: klik polygon tool → gambar area (bisa banyak) → export. Mendukung
+        lubang & multi-polygon.
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script>
+      // ====== Ruang koordinat piksel ======
+      const W = 3072,
+        H = 2048;
+      const FULL = [
+        [0, 0],
+        [H, W],
+      ]; // [lat(y), lng(x)]
+
+      // ====== Peta CRS.Simple ======
+      const map = L.map("map", {
+        crs: L.CRS.Simple,
+        minZoom: 0,
+        zoomSnap: 0.25,
+        zoomControl: true,
+      });
+      L.imageOverlay("base_map.png", FULL, { opacity: 0.9 }).addTo(map); // pastikan 3072x2048
+      map.fitBounds(FULL);
+      map.setMaxBounds(FULL);
+
+      // Layer poligon
+      const drawn = new L.FeatureGroup().addTo(map);
+
+      // Toolbar draw di kanan atas
+      const drawControl = new L.Control.Draw({
+        position: "topright",
+        edit: { featureGroup: drawn, edit: true, remove: true },
+        draw: {
+          polygon: {
+            allowIntersection: false,
+            showArea: false,
+            shapeOptions: {
+              color: "#00d4ff",
+              weight: 2,
+              fillColor: "#00c8ff",
+              fillOpacity: 0.3,
+            },
+          },
+          polyline: false,
+          rectangle: false,
+          circle: false,
+          marker: false,
+          circlemarker: false,
+        },
+      });
+      map.addControl(drawControl);
+      map.on(L.Draw.Event.CREATED, (e) => drawn.addLayer(e.layer));
+
+      // ====== Helpers ======
+      const $ = (s) => document.querySelector(s);
+      const sanitizeName = (raw) =>
+        (raw || "region")
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9\-_\s]+/g, "")
+          .replace(/\s+/g, "-")
+          .slice(0, 80) || "region";
+
+      function collectAllRings() {
+        const polys = [];
+        drawn.eachLayer((layer) => {
+          if (layer instanceof L.Polygon) {
+            const ll = layer.getLatLngs();
+            if (Array.isArray(ll[0][0]))
+              ll.forEach((poly) => polys.push(poly)); // MultiPolygon
+            else polys.push(ll); // Polygon
+          }
+        });
+        return polys; // array of polygon; polygon = array of rings; ring = array of LatLng
+      }
+
+      // ⚠️ Kunci kesamaan orientasi: flip Y → y = H - lat
+      function toCanvasPoint(pt) {
+        return { x: pt.lng, y: H - pt.lat };
+      }
+
+      // ====== Export PNG (HiDPI aware) ======
+      function exportPNG() {
+        const name = sanitizeName($("#rname").value);
+        const fillColor = $("#fillColor").value || "#00c8ff";
+        const fillOpacity = Math.max(
+          0,
+          Math.min(1, parseFloat($("#fillOpacity").value || 0.8))
+        );
+        const strokeColor = $("#strokeColor").value || "#00d4ff";
+        const strokeWidth = Math.max(
+          0,
+          parseInt($("#strokeWidth").value || 2, 10)
+        );
+
+        const polys = collectAllRings();
+        if (!polys.length) {
+          alert("Belum ada polygon. Gambar dulu ya 🙂");
+          return;
+        }
+
+        const dpr = window.devicePixelRatio || 1;
+        const c = document.createElement("canvas");
+        c.width = W * dpr;
+        c.height = H * dpr;
+        c.style.width = W + "px";
+        c.style.height = H + "px";
+        const g = c.getContext("2d");
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.clearRect(0, 0, W, H);
+
+        g.fillStyle = hexToRgba(fillColor, fillOpacity);
+        g.strokeStyle = strokeColor;
+        g.lineWidth = strokeWidth;
+        g.lineJoin = "round";
+        g.lineCap = "round";
+        g.shadowColor = "rgba(0,0,0,.35)";
+        g.shadowBlur = 18;
+
+        polys.forEach((poly) => {
+          g.save();
+          g.beginPath();
+          poly.forEach((ring) => {
+            ring.forEach((pt, i) => {
+              const p = toCanvasPoint(pt);
+              if (i === 0) g.moveTo(p.x, p.y);
+              else g.lineTo(p.x, p.y);
+            });
+            g.closePath();
+          });
+          g.fill("evenodd");
+          if (strokeWidth > 0) g.stroke();
+          g.restore();
+        });
+
+        c.toBlob((blob) => {
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `region-${name}.png`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        }, "image/png");
+      }
+
+      // ====== Export SVG (vektor tajam) ======
+      function exportSVG() {
+        const name = sanitizeName($("#rname").value);
+        const fillColor = $("#fillColor").value || "#00c8ff";
+        const fillOpacity = Math.max(
+          0,
+          Math.min(1, parseFloat($("#fillOpacity").value || 0.8))
+        );
+        const strokeColor = $("#strokeColor").value || "#00d4ff";
+        const strokeWidth = Math.max(
+          0,
+          parseInt($("#strokeWidth").value || 2, 10)
+        );
+
+        const polys = collectAllRings();
+        if (!polys.length) {
+          alert("Belum ada polygon. Gambar dulu ya 🙂");
+          return;
+        }
+
+        const toPath = (ring) =>
+          ring
+            .map((pt, i) => {
+              const p = toCanvasPoint(pt);
+              return `${i === 0 ? "M" : "L"}${p.x} ${p.y}`;
+            })
+            .join(" ") + " Z";
+
+        const svgPaths = polys
+          .map((poly) => {
+            const d = poly.map(toPath).join(" ");
+            return `<path d="${d}" fill="${fillColor}" fill-opacity="${fillOpacity}" stroke="${strokeColor}" stroke-width="${strokeWidth}" fill-rule="evenodd" />`;
+          })
+          .join("\n");
+
+        const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" version="1.1">
+  <defs>
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#softGlow)">
+    ${svgPaths}
+  </g>
+</svg>`;
+
+        const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `region-${name}.svg`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      }
+
+      // ====== Utilities ======
+      function hexToRgba(hex, alpha = 1) {
+        const h = hex.replace("#", "");
+        const bigint = parseInt(
+          h.length === 3
+            ? h
+                .split("")
+                .map((c) => c + c)
+                .join("")
+            : h,
+          16
+        );
+        const r = (bigint >> 16) & 255,
+          g = (bigint >> 8) & 255,
+          b = bigint & 255;
+        return `rgba(${r},${g},${b},${alpha})`;
+      }
+
+      // ====== Actions ======
+      document.getElementById("btnExportPNG").onclick = exportPNG;
+      document.getElementById("btnExportSVG").onclick = exportSVG;
+      document.getElementById("btnClear").onclick = () => {
+        if (confirm("Hapus semua polygon?")) drawn.clearLayers();
+      };
+
+      // Sinkronkan style saat mulai menggambar
+      map.on("draw:drawstart", (e) => {
+        if (e.layerType === "polygon") {
+          const drawer = e.target._toolbars.draw._modes.polygon.handler;
+          const fillColor = $("#fillColor").value || "#00c8ff";
+          const fillOpacity = Math.max(
+            0,
+            Math.min(1, parseFloat($("#fillOpacity").value || 0.8))
+          );
+          const strokeColor = $("#strokeColor").value || "#00d4ff";
+          const strokeWidth = Math.max(
+            0,
+            parseInt($("#strokeWidth").value || 2, 10)
+          );
+          drawer.options.shapeOptions = {
+            color: strokeColor,
+            weight: strokeWidth,
+            fillColor,
+            fillOpacity,
+          };
+        }
+      });
+    </script>
+  </body>
+</html>
