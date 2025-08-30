@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Image Map Annotator — 2048×1365 Export (Fix Flip)</title>
+    <title>Polygon-only Export — 2048×1365 (FIX)</title>
 
-    <!-- Leaflet core -->
+    <!-- Leaflet -->
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -31,9 +31,9 @@
       }
       .toolbar {
         position: absolute;
-        z-index: 1000;
         right: 12px;
         top: 12px;
+        z-index: 1000;
         background: rgba(11, 15, 23, 0.85);
         color: #e5e7eb;
         border: 1px solid #1f2937;
@@ -44,7 +44,13 @@
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
         display: grid;
         gap: 8px;
-        min-width: 280px;
+        min-width: 300px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
       }
       .btn {
         border: 1px solid #374151;
@@ -59,18 +65,13 @@
         background: #0b1220;
       }
       input[type="text"],
-      input[type="number"] {
+      input[type="number"],
+      input[type="color"] {
         border: 1px solid #374151;
         background: #0b0f17;
         color: #e5e7eb;
         border-radius: 10px;
         padding: 7px 10px;
-      }
-      .row {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        flex-wrap: wrap;
       }
       small {
         opacity: 0.8;
@@ -84,8 +85,9 @@
       <div class="row">
         <strong>Basemap:</strong> <code>./base_map.png</code> (2048×1365)
       </div>
+
       <div class="row">
-        <label>Stroke px</label>
+        <label>Stroke</label>
         <input
           id="strokeW"
           type="number"
@@ -94,6 +96,7 @@
           max="40"
           style="width: 90px"
         />
+        <input id="strokeC" type="color" value="#00e0ff" title="Warna stroke" />
         <label>Fill α</label>
         <input
           id="fillA"
@@ -104,12 +107,15 @@
           step="0.05"
           style="width: 90px"
         />
+        <input id="fillC" type="color" value="#00e0ff" title="Warna fill" />
         <button class="btn" id="applyStyle">Terapkan</button>
       </div>
+
       <div class="row">
         <button id="fit" class="btn">🔎 Zoom ke Gambar</button>
         <button id="clear" class="btn">🧹 Bersihkan</button>
       </div>
+
       <div class="row">
         <input
           id="filename"
@@ -117,26 +123,22 @@
           placeholder="Nama file (opsional)"
           style="flex: 1"
         />
-        <label
-          ><input id="bgToggle" type="checkbox" checked /> Sertakan
-          basemap</label
-        >
       </div>
-      <button id="export" class="btn">⬇️ Ekspor PNG (2048×1365)</button>
+
+      <button id="export" class="btn">⬇️ Ekspor PNG (poligon saja)</button>
       <small
-        >Gunakan toolbar Leaflet di kiri atas untuk menggambar/ubah/hapus
-        poligon/persegi.</small
+        >Poligon saja (background transparan). Gunakan toolbar Leaflet di kiri
+        atas untuk menggambar.</small
       >
     </div>
 
     <script>
-      // ---- Konstanta resolusi & path ----
-      const IMG_W = 2048;
-      const IMG_H = 1365;
-      const IMG_PATH = "./base_map.png";
+      // --- Konstanta gambar ---
+      const IMG_W = 2048,
+        IMG_H = 1365,
+        IMG_PATH = "./base_map.png";
 
-      // ---- Inisialisasi peta CRS.Simple ----
-      // Catatan: CRS.Simple menganggap lat = -y, lng = x
+      // --- Peta (CRS.Simple: lat = -y, lng = x) ---
       const map = L.map("map", {
         crs: L.CRS.Simple,
         preferCanvas: true,
@@ -148,66 +150,30 @@
         wheelPxPerZoomLevel: 96,
       });
 
-      // Bounds yang benar untuk CRS.Simple: [[0,0], [-H, W]]
+      // Pakai bounds terbalik di sumbu Y
       const bounds = [
         [0, 0],
         [-IMG_H, IMG_W],
       ];
-      const overlay = L.imageOverlay(IMG_PATH, bounds, {
-        interactive: false,
-      }).addTo(map);
+      L.imageOverlay(IMG_PATH, bounds, { interactive: false }).addTo(map);
       map.setMaxBounds(bounds);
       map.fitBounds(bounds, { animate: false });
 
-      // ---- Layer gambar & kontrol menggambar ----
+      // --- Gambar & kontrol ---
       const drawnItems = new L.FeatureGroup().addTo(map);
 
-      let shapeOptions = { color: "#00e0ff", weight: 3, fillOpacity: 0.25 };
-      let drawControl = new L.Control.Draw({
-        position: "topleft",
-        draw: {
-          polygon: { allowIntersection: false, showArea: true, shapeOptions },
-          rectangle: { shapeOptions },
-          polyline: false,
-          circle: false,
-          circlemarker: false,
-          marker: false,
-        },
-        edit: { featureGroup: drawnItems, remove: true },
-      });
+      let style = {
+        color: "#00e0ff",
+        weight: 3,
+        fillOpacity: 0.25,
+        fillColor: "#00e0ff",
+      };
+      let drawControl = buildDraw(style);
       map.addControl(drawControl);
-
       map.on(L.Draw.Event.CREATED, (e) => drawnItems.addLayer(e.layer));
 
-      // ---- UI actions ----
-      document.getElementById("fit").addEventListener("click", () => {
-        map.fitBounds(bounds);
-      });
-
-      document.getElementById("clear").addEventListener("click", () => {
-        if (confirm("Hapus semua poligon?")) drawnItems.clearLayers();
-      });
-
-      document.getElementById("applyStyle").addEventListener("click", () => {
-        const strokeW = clamp(
-          parseFloat(document.getElementById("strokeW").value) || 3,
-          1,
-          40
-        );
-        const fillA = clamp(
-          parseFloat(document.getElementById("fillA").value) || 0.25,
-          0,
-          1
-        );
-        shapeOptions = {
-          color: "#00e0ff",
-          weight: strokeW,
-          fillOpacity: fillA,
-        };
-
-        // Perbarui kontrol draw
-        map.removeControl(drawControl);
-        drawControl = new L.Control.Draw({
+      function buildDraw(shapeOptions) {
+        return new L.Control.Draw({
           position: "topleft",
           draw: {
             polygon: { allowIntersection: false, showArea: true, shapeOptions },
@@ -219,40 +185,66 @@
           },
           edit: { featureGroup: drawnItems, remove: true },
         });
+      }
+
+      // --- UI ---
+      document.getElementById("fit").onclick = () => map.fitBounds(bounds);
+      document.getElementById("clear").onclick = () => {
+        if (confirm("Hapus semua poligon?")) drawnItems.clearLayers();
+      };
+      document.getElementById("applyStyle").onclick = () => {
+        const strokeW = clamp(
+          parseFloat(document.getElementById("strokeW").value) || 3,
+          1,
+          40
+        );
+        const fillA = clamp(
+          parseFloat(document.getElementById("fillA").value) || 0.25,
+          0,
+          1
+        );
+        const strokeC = document.querySelector("#strokeC").value || "#00e0ff";
+        const fillC = document.querySelector("#fillC").value || "#00e0ff";
+        style = {
+          color: strokeC,
+          weight: strokeW,
+          fillOpacity: fillA,
+          fillColor: fillC,
+        };
+
+        map.removeControl(drawControl);
+        drawControl = buildDraw(style);
         map.addControl(drawControl);
 
-        // Perbarui layer yang sudah ada
         drawnItems.eachLayer((l) => {
-          if (l.setStyle) l.setStyle(shapeOptions);
+          if (l.setStyle) l.setStyle(style);
         });
-      });
+      };
 
-      document.getElementById("export").addEventListener("click", async () => {
-        const includeBg = document.getElementById("bgToggle").checked;
-        const nameInput = document.getElementById("filename").value.trim();
+      // --- EXPORT: poligon saja (transparan) ---
+      document.getElementById("export").onclick = () => {
+        if (drawnItems.getLayers().length === 0) {
+          alert("Belum ada poligon untuk diekspor.");
+          return;
+        }
+
+        const nameInput = (
+          document.getElementById("filename").value || ""
+        ).trim();
         const filename = nameInput
           ? nameInput.replace(/\.(png|jpe?g|webp)$/i, "")
-          : "annotated-map";
+          : "polygons";
 
         const out = document.createElement("canvas");
         out.width = IMG_W;
         out.height = IMG_H;
         const ctx = out.getContext("2d");
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
+        ctx.clearRect(0, 0, IMG_W, IMG_H); // transparan
 
-        if (includeBg) {
-          await drawBackground(ctx, IMG_PATH, IMG_W, IMG_H);
-        } else {
-          ctx.clearRect(0, 0, IMG_W, IMG_H);
-        }
-
-        // ✨ KONVERSI BENAR: pixelX = lng, pixelY = -lat
-        const strokeW = shapeOptions.weight;
-        const fillA = shapeOptions.fillOpacity;
         drawnItems.eachLayer((layer) => {
+          // dukung Polygon & Rectangle (keduanya turunan L.Polygon)
           if (layer instanceof L.Polygon || layer instanceof L.Rectangle) {
-            drawPolygonLayer(ctx, layer, strokeW, fillA, "#00e0ff");
+            drawPolygon(ctx, layer, style);
           }
         });
 
@@ -260,71 +252,92 @@
         a.download = `${filename}.png`;
         a.href = out.toDataURL("image/png");
         a.click();
+      };
 
-        // ---- Internal helpers ----
-        function drawPolygonLayer(ctx, layer, strokeW, fillA, hexColor) {
-          const parts = layer.getLatLngs();
-          ctx.save();
-          ctx.lineWidth = strokeW;
-          ctx.strokeStyle = hexColor;
-          ctx.fillStyle = hexToRgba(hexColor, fillA);
+      // --- Helpers ---
+      function drawPolygon(ctx, layer, sty) {
+        const latlngs = layer.getLatLngs();
+        const polygons = normalizePolygons(latlngs); // => Array< Array< Array<[x,y]> > >
+        // Struktur output: [polygon][ring][point [x,y]]
+        ctx.save();
+        ctx.lineWidth = sty.weight;
+        ctx.strokeStyle = sty.color;
+        ctx.fillStyle = hexToRgba(sty.fillColor || sty.color, sty.fillOpacity);
 
-          const drawRing = (ring) => {
-            ctx.beginPath();
+        polygons.forEach((rings) => {
+          ctx.beginPath();
+          rings.forEach((ring) => {
             for (let i = 0; i < ring.length; i++) {
-              const px = ring[i].lng; // x = lng
-              const py = -ring[i].lat; // y = -lat  (FIX TERBALIK)
-              if (i === 0) ctx.moveTo(px, py);
-              else ctx.lineTo(px, py);
+              const x = ring[i][0];
+              const y = ring[i][1];
+              if (i === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
             }
             ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-          };
-
-          const first = parts[0];
-          if (Array.isArray(first) && Array.isArray(first[0])) {
-            parts.forEach((ring) => drawRing(ring));
-          } else {
-            parts.forEach((ring) => drawRing(ring));
-          }
-          ctx.restore();
-        }
-      });
-
-      // ---- Helpers ----
-      function drawBackground(ctx, src, w, h) {
-        return new Promise((resolve) => {
-          const img = new Image();
-          img.onload = () => {
-            ctx.drawImage(img, 0, 0, w, h);
-            resolve();
-          };
-          img.onerror = () => resolve();
-          img.src = src;
+          });
+          // evenodd agar lubang (holes) benar
+          if (ctx.fill) ctx.fill("evenodd");
+          ctx.stroke();
         });
+
+        ctx.restore();
+      }
+
+      // NORMALISASI YANG BENAR:
+      // - Jika level terendah adalah LatLng => map ke [lng, -lat]
+      // - Tangani 1-level (ring), 2-level (polygon: [ring, hole...]), 3-level (multi-polygon)
+      function normalizePolygons(latlngs) {
+        if (!Array.isArray(latlngs) || latlngs.length === 0) return [];
+
+        const isLatLng = (v) =>
+          v && typeof v.lat === "number" && typeof v.lng === "number";
+
+        // Case 1: ring langsung: LatLng[]
+        if (isLatLng(latlngs[0])) {
+          return [[latlngs.map((ll) => [ll.lng, -ll.lat])]];
+        }
+
+        // Case 2: polygon: LatLng[][]  (ring, holes...)
+        if (
+          Array.isArray(latlngs[0]) &&
+          latlngs[0].length &&
+          isLatLng(latlngs[0][0])
+        ) {
+          return [latlngs.map((ring) => ring.map((ll) => [ll.lng, -ll.lat]))];
+        }
+
+        // Case 3: multi-polygon: LatLng[][][]
+        if (
+          Array.isArray(latlngs[0]) &&
+          Array.isArray(latlngs[0][0]) &&
+          latlngs[0][0].length &&
+          isLatLng(latlngs[0][0][0])
+        ) {
+          return latlngs.map((poly) =>
+            poly.map((ring) => ring.map((ll) => [ll.lng, -ll.lat]))
+          );
+        }
+
+        // Fallback defensif
+        return [];
       }
 
       function hexToRgba(hex, a) {
-        const m = hex.replace("#", "");
-        const s =
-          m.length === 3
-            ? m
-                .split("")
-                .map((c) => c + c)
-                .join("")
-            : m;
-        const int = parseInt(s, 16);
+        let m = (hex || "#00e0ff").replace("#", "");
+        if (m.length === 3)
+          m = m
+            .split("")
+            .map((c) => c + c)
+            .join("");
+        const int = parseInt(m, 16);
         const r = (int >> 16) & 255,
           g = (int >> 8) & 255,
           b = int & 255;
         return `rgba(${r},${g},${b},${a})`;
       }
-      function clamp(v, min, max) {
-        return Math.max(min, Math.min(max, v));
-      }
+      const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
-      // (Opsional) cegah klik di toolbar ikut nge-trigger map
+      // Hindari klik toolbar menembus peta
       L.DomEvent.disableClickPropagation(document.getElementById("ui"));
     </script>
   </body>
